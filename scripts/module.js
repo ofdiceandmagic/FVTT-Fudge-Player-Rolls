@@ -62,7 +62,13 @@ const onSubmit = async (doc) => {
     //delete the original chat message from the log so that it doesn't display in the chat next time the server is loaded
     ui.chat.deleteMessage(this.data._id); //why doesn't this work?
 
-    return;
+    if (!sender.isGM){
+      //if the sender is a player, don't let the original roll go through.
+      return;
+    }else{
+      //if the sender is the GM, let the original roll go through.
+      return wrapped(...args);
+    }
   }, 'MIXED' );
 
 }; 
