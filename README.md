@@ -1,9 +1,6 @@
 Fudge Player Rolls adds a :poop: button to the token tools that allows you to set a target result for the next player's roll.  
 When the next player rolls, the result of their roll will be the target you entered.
 
-# Manifest
-https://github.com/ofdiceandmagic/FVTT-Fudge-Player-Rolls/releases/latest/download/module.json
-
 # Why
 Every DM has experienced that moment where one player's roll totally kills the story, or felt that moment of dread when a player is rolling their 3rd death save during a random encounter and thought "wow it would totally blow ogre balls if this character died right now from fighting a little pack of wolves. And then there are the times when a player rolls investigation in the as-yet-unknown BBEG's office, and even though you set the DC at 30, they get inspiration from the bard and roll a 20 on the die. They've found the big secret in session 3 and all your planning needs to be thrown out the window.
 
@@ -23,4 +20,3 @@ If the target is larger than the maximum possible roll, the result will be the m
 1. Fudge Player Rolls doesn't actually roll any dice. Instead, it intercepts the dice rolling process and enters a fake dice roll message into the chat. This means that some modules, like Dice So Nice, are not compatible with Fudge Player Rolls.
 
 2. The original roll message is still saved to the chat log, and I don't know what to do about it. As of now, when you reload your server, the original roll message will appear in the chat. GMs with particularly scrupulous or astute players should be aware of this and delete the original messages, lest the jig be up! 
-
