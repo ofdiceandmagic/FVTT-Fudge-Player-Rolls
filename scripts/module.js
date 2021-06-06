@@ -42,32 +42,34 @@ const onSubmit = async (doc) => {
     return whisperError("Invalid Target Format");
   }
   console.log(`Fudge Player Rolls | target is ${target}`);
-
-  Hooks.on('preCreateChatMessage',(document, createData, options, userId) => {
-    sender = document.data.speaker;
-
-    if (target != 'off' && document.isRoll && !document.user.isGM){ 
-      //if the message is a roll sent by a player and a target is set
-      // - call fudgeRoll
-      // - since this is the next player roll, turn off target
-      theRoll = JSON.parse(document.data.roll);
-      flavortxt = document.data.flavor;
-      fudgeRoll(target, theRoll, sender, flavortxt, document);
-      //update the chat data
-      document.data.update({
-        speaker: sender,
-        content: content, //***this will = the total
-        flavor: flavortxt,
-        sound: 'sounds/dice.wav' //*** shouldn't need this at all, as it doesn't need changing
-        //, roll: fakeRoll      ***this will be a stringified object in the correct format
-      });
-
-      target = 'off';   
-      console.log(`target = ${target}`);   
-      return;
-    }
-  });
 };
+
+Hooks.on('preCreateChatMessage',(document, createData, options, userId) => {
+  sender = document.data.speaker;
+
+  if (document.user.isGM) return;
+
+  if (target != 'off' && document.isRoll){ 
+    //if the message is a roll sent by a player and a target is set
+    // - call fudgeRoll
+    // - since this is the next player roll, turn off target
+    theRoll = JSON.parse(document.data.roll);
+    flavortxt = document.data.flavor;
+    fudgeRoll(target, theRoll, sender, flavortxt, document);
+    //update the chat data
+    document.data.update({
+      speaker: sender,
+      content: content, //***this will = the total
+      flavor: flavortxt,
+      sound: 'sounds/dice.wav' //*** shouldn't need this at all, as it doesn't need changing
+      //, roll: fakeRoll      ***this will be a stringified object in the correct format
+    });
+
+    target = 'off';   
+    console.log(`Fudge Player Rolls | Roll was fudged.`);   
+    return;
+  }
+});
 
 const fudgeRoll = async (target, theRoll, sender, flavortxt, document) => {
   formula = theRoll.formula;
