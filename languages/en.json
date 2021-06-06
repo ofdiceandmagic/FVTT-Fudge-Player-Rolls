@@ -1,3 +1,5 @@
 {
-    "MODULE.hello": "hello"
+  "Fudge.Target": "Target Result",
+  "Fudge.TargetPlaceholder": "1",
+  "Fudge.UnsetDialog": "You have already set a target. What do you want to do?"
 }
