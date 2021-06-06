@@ -17,6 +17,4 @@ If the target is larger than the maximum possible roll, the result will be the m
 **_To erase or change the target before the next player rolls, click the fudge button again._**
 
 # Things To Note
-1. Fudge Player Rolls doesn't actually roll any dice. Instead, it intercepts the dice rolling process and enters a fake dice roll message into the chat. This means that some modules, like Dice So Nice, are not compatible with Fudge Player Rolls.
-
-2. The original roll message is still saved to the chat log, and I don't know what to do about it. As of now, when you reload your server, the original roll message will appear in the chat. GMs with particularly scrupulous or astute players should be aware of this and delete the original messages, lest the jig be up! 
+1. Fudge Player Rolls doesn't actually roll any dice. Instead, it intercepts the dice rolling process and enters a fake dice roll message into the chat. This means that some modules, like Dice So Nice and MIDI QOL, are not compatible with Fudge Player Rolls.
