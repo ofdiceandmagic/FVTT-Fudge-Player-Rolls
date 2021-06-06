@@ -1,7 +1,6 @@
-Hooks.once('ready', () => {
-  if(!game.modules.get('lib-wrapper')?.active && game.user.isGM)
-      ui.notifications.error("Fudge Player Rolls requires the 'libWrapper' module. Please install and activate it.");
-});
+Hooks.on('ready', () => {
+  CONFIG.debug.hooks = true;
+})
 
 const whisperError = (error) => {
   console.error(`Fudge Player Rolls | ${error}`);
@@ -32,60 +31,58 @@ const parseDialogDoc = (doc) => {
   }
 }
 
-const evaluateTotalVsTarget = (total, target) => {
-  return total === target;
-};
-
-let wrapperIsRegistered = false;
+//define variables
+let sender, theRoll, flavortxt, content, formula, total, fakeRoll;
+let target = 'off';
 
 const onSubmit = async (doc) => {
-  const target = parseDialogDoc(doc);
+  target = parseDialogDoc(doc);
   if (!target) {
+    target = 'off';
     return whisperError("Invalid Target Format");
   }
   console.log(`Fudge Player Rolls | target is ${target}`);
 
-  libWrapper.register('fudge-player-rolls', 'ChatMessage.prototype._onCreate', function (wrapped, ...args) {
-    let sender = this.user;
-    let theRoll, flavortxt;
+  Hooks.on('preCreateChatMessage',(document, createData, options, userId) => {
+    sender = document.data.speaker;
 
-    if (this.isRoll && !sender.isGM){ 
-      //if the message is a roll sent by a player
+    if (target != 'off' && document.isRoll && !document.user.isGM){ 
+      //if the message is a roll sent by a player and a target is set
       // - call fudgeRoll
-      // - since this is the next player roll, unregister this hook
-      theRoll = JSON.parse(this.data.roll);
-      flavortxt = this.data.flavor;
-      fudgeRoll(target, theRoll, sender, flavortxt);
-      libWrapper.unregister('fudge-player-rolls', 'ChatMessage.prototype._onCreate');
-      wrapperIsRegistered = false;
-    }
-    //delete the original chat message from the log so that it doesn't display in the chat next time the server is loaded
-    ui.chat.deleteMessage(this.data._id); //why doesn't this work?
+      // - since this is the next player roll, turn off target
+      theRoll = JSON.parse(document.data.roll);
+      flavortxt = document.data.flavor;
+      fudgeRoll(target, theRoll, sender, flavortxt, document);
+      //update the chat data
+      document.data.update({
+        speaker: sender,
+        content: content, //***this will = the total
+        flavor: flavortxt,
+        sound: 'sounds/dice.wav' //*** shouldn't need this at all, as it doesn't need changing
+        //, roll: fakeRoll      ***this will be a stringified object in the correct format
+      });
 
-    if (!sender.isGM){
-      //if the sender is a player, don't let the original roll go through.
+      target = 'off';   
+      console.log(`target = ${target}`);   
       return;
-    }else{
-      //if the sender is the GM, let the original roll go through.
-      return wrapped(...args);
     }
-  }, 'MIXED' );
+  });
+};
 
-}; 
-
-const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
-  let formula = theRoll.formula;
+const fudgeRoll = async (target, theRoll, sender, flavortxt, document) => {
+  formula = theRoll.formula;
 
   /**
    * Get the Total and minimum possible and maximum possible rolls by looping through theRoll.terms
-   *  - create newterms array that will become the total of the modifiers
+   *  - create modterms array that will become the total of the modifiers
    *  - create diceterms array that stores only the die expression objects, without the modifiers
    *  - -- define the 'minus' property of the diceterm object, which will tell us later whether we should subtract or add that term
    *  - if the term is a die, add number of dice to the minroll, add number of dice times faces to maxroll.
    *  - sum mods and target to get the total.
    *  - check if total is less than min or greater than max. If so, change total to min or max respectively.
    */
-  let newterms = [];
+  //define diceterms, mods, minroll and maxroll
+  let modterms = [];
   let diceterms = [];
   let minroll = 0;
   let maxroll = 0;
@@ -93,31 +90,39 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
     let term = theRoll.terms[i];
     if (term.class == 'Die'){
       diceterms.push(term);
-      if (theRoll.terms[i-1] == "-"){ 
+      if (i>0 && theRoll.terms[i-1].class == 'OperatorTerm' && theRoll.terms[i-1].operator == "-"){ 
         diceterms[diceterms.length-1].minus = true;
-      } else{
+      } else if (i>0 && theRoll.terms[i-1].class == 'OperatorTerm' && theRoll.terms[i-1].operator == "+") {
         diceterms[diceterms.length-1].minus = false;
       }
-      newterms[i] = 0;
+      modterms[i] = 0;
       let sides = diceterms[diceterms.length-1].faces;
       let num = diceterms[diceterms.length-1].number;
+      let minmaxNum = num;
+      if ( (term.modifiers.includes('kh') || term.modifiers.includes('kl')) && term.number > 1 ){ //term.number has to be greater than one, otherwise if they enter 1d20kh this will set the min/max roll to 0
+        //if it has adv/dis, subtract 1 from the number of dice
+        minmaxNum = num - 1;
+      }
       if (term.minus){
         //if term should be subtracted, -= minroll and maxroll. else, +=
-        minroll -= num;
-        maxroll -= num*sides;
+        minroll -= minmaxNum;
+        maxroll -= minmaxNum*sides;
       }else{
-        minroll += num;
-        maxroll += num*sides;
+        minroll += minmaxNum;
+        maxroll += minmaxNum*sides;
       }
-    } else{
-      newterms[i] = term;
+    } else if (term.class == 'NumericTerm') {
+      modterms[i] = term.number;
+    } else if (term.class == 'OperatorTerm') {
+      modterms[i] = term.operator;
     }
   }
-  newterms = newterms.join('');
-  let mods = eval(newterms);
+  modterms = modterms.join('');
+  console.log(`modterms = `, modterms);
+  let mods = eval(modterms);
   minroll += mods;
   maxroll += mods;
-  let total = target;
+  total = target;
   if (total < minroll){ 
     total = minroll;
     whisperError(`Total was less than min possible roll. Total changed to ${minroll}`);
@@ -125,6 +130,12 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
   if (total > maxroll){ 
     total = maxroll;
     whisperError(`Total was greater than max possible roll. Total changed to ${maxroll}`);
+  }
+
+  //loop through all dice terms. If any have adv/dis and its num is 1, change the num to 2.
+  for (let i=0; i<diceterms.length; i++){
+    let diceterm = diceterms[i];
+    if ( (diceterm.modifiers.includes('kh') || diceterm.modifiers.includes('kl')) && diceterm.number == 1) diceterm.number = 2;
   }
 
   /**
@@ -156,6 +167,9 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
     if (diceterm.modifiers.includes('kh')) adjustFirstFakeForAdvDisadv(diceterm, 'adv');
     if (diceterm.modifiers.includes('kl')) adjustFirstFakeForAdvDisadv(diceterm, 'disadv');
   }
+
+  console.log('diceterms = ', diceterms);
+
   /**
    * 
    * @returns 
@@ -193,7 +207,7 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
         diceTermsTotal += getFakeResultsTotal(diceterm);
       }
     }
-    return diceTermsTotal+mods;
+    return diceTermsTotal + mods;
   }
   
   /**
@@ -293,11 +307,12 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
     let diceterm = diceterms[i];
     let sides = diceterm.faces;
     let num = diceterm.number;
+    //if it includes kh or kl and the num == 1, make the num 2.
+    if ( (diceterm.modifiers.includes('kh') || diceterm.modifiers.includes('kl')) && num == 1 ) num = 2;
     let dieFormula = `${num}d${sides}`;
     if (diceterm.modifiers.includes('kh')) dieFormula += 'kh';
     if (diceterm.modifiers.includes('kl')) dieFormula += 'kl';
     
-
     let htmlStart = `
       <section class="tooltip-part">
         <div class="dice">
@@ -313,10 +328,24 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
     //loop through diceterm.fakeresults and add an li for each one
     //if the diceterm has adv/disadv
     // - add the 'discarded' class to the first fake result's li
+    // - add max/min/critical/fumble classes if necessary
     for (let j=0; j<diceterm.fakeResults.length; j++){
       if(diceterm.modifiers.includes('kh') && j==0 || diceterm.modifiers.includes('kl') && j==0){
         htmlListItems += `<li class="roll die d${sides} discarded">${diceterm.fakeResults[j]}</li>`;
-      } else{
+      } else if( (diceterm.modifiers.includes('kh') && j==0 || diceterm.modifiers.includes('kl') && j==0) && diceterm.fakeResults[j] == diceterm.faces ){
+        //if it has adv/dis and its the max roll
+        htmlListItems += `<li class="roll die d${sides} max discarded">${diceterm.fakeResults[j]}</li>`;
+      } else if ( (diceterm.modifiers.includes('kh') && j==0 || diceterm.modifiers.includes('kl') && j==0) && diceterm.fakeResults[j] == 1 ){
+        //if it has adv/dis and its 1
+        htmlListItems += `<li class="roll die d${sides} min discarded">${diceterm.fakeResults[j]}</li>`;
+      }else if (diceterm.fakeResults[j] == diceterm.faces){
+        //if its not adv/dis and its the max roll
+        htmlListItems += `<li class="roll die d${sides} max">${diceterm.fakeResults[j]}</li>`;
+      }else if(diceterm.fakeResults[j] == 1){
+        //if its not adv/dis and its 1
+        htmlListItems += `<li class="roll die d${sides} min">${diceterm.fakeResults[j]}</li>`;
+      }
+      else{
         htmlListItems += `<li class="roll die d${sides}">${diceterm.fakeResults[j]}</li>`;
       }
     }
@@ -350,8 +379,8 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
         let fakeResult = diceterm.fakeResults[i];
         if (fakeResult > highestFakeResult) highestFakeResult = fakeResult;
       }
-      if (highestFakeResult == diceterm.faces){
-        diceterm.fakeResults[0] = diceterm.faces;
+      if (highestFakeResult == 1){
+        diceterm.fakeResults[0] = 1;
       }else{
         diceterm.fakeResults[0] = highestFakeResult - 1;
       }
@@ -365,8 +394,8 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
         let fakeResult = diceterm.fakeResults[i];
         if (fakeResult < lowestFakeResult) lowestFakeResult = fakeResult;
       }
-      if (lowestFakeResult == 1){
-        diceterm.fakeResults[0] = 1;
+      if (lowestFakeResult == diceterm.faces){
+        diceterm.fakeResults[0] = diceterm.faces;
       }else{
         diceterm.fakeResults[0] = lowestFakeResult + 1;
       }
@@ -376,7 +405,7 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
   /**
    * 
    * @param {*} diceterm 
-   * @returns 
+   * @returns total
    */
   function getFakeResultsTotal(diceterm){
     let total = diceterm.fakeResults.reduce(function(a,b){
@@ -387,25 +416,62 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt) => {
     return total;
   }
 
+  //if its a crit or fumble give it the appropriate class
+  //  if the first die term is 1d20 and its modifiers doesn't include kh or kl and it's result is 20
+  //      give it the critical class 
+  //  if "" result is 1
+  //      give it the fumble class
+  //  if the first die term is a d20 and its modifiers do include kh or kl and one of the results other than the first result is  20
+  //      give it the critical class
+  //  "" result is  1
+  //      give it the fumble class
+  let htmlResult;
+  console.log(`total = ${getTotal()}`);
+  if (diceterms[0].faces == 20 && diceterms[0].number == 1 && 
+      !( diceterms[0].modifiers.includes('kh') || diceterms[0].modifiers.includes('kl') ) &&
+      diceterms[0].fakeResults[0] == 20
+    ){ 
+      htmlResult = `<h4 class="dice-total critical" style="color:green">${getTotal()}</h4>`;
+    } 
+  else if (diceterms[0].faces == 20 && diceterms[0].number == 1 &&
+      !( diceterms[0].modifiers.includes('kh') || diceterms[0].modifiers.includes('kl') ) &&
+      diceterms[0].fakeResults[0] == 1
+    ){ 
+      htmlResult = `<h4 class="dice-total fumble" style="color:red">${getTotal()}</h4>`;
+    } 
+  else if (diceterms[0].faces == 20 && 
+      ( diceterms[0].modifiers.includes('kh') || diceterms[0].modifiers.includes('kl') )
+    ){
+      //check if 1 of the results other than the first result is 20 or 1
+      let foundAtwenty = false;
+      let foundAone = false;
+      for (let i=1; i<diceterms[0].fakeResults.length; i++){
+        let fakeResult = diceterms[0].fakeResults[i];
+        if (fakeResult == 20) foundAtwenty = true;
+        if (fakeResult == 1) foundAone = true;
+      }
+      if (foundAone === true){
+        htmlResult = `<h4 class="dice-total fumble" style="color:red">${getTotal()}</h4>`;
+      } else if (foundAtwenty === true){
+        htmlResult = `<h4 class="dice-total critical" style="color:green">${getTotal()}</h4>`;
+      } else{
+        htmlResult = `<h4 class="dice-total">${getTotal()}</h4>`;
+      }
+    }
+  else{
+      htmlResult = `<h4 class="dice-total">${getTotal()}</h4>`;
+    }
+  tooltip += htmlResult;
+
   //define the content of the chat message
-  let content = `
+  content = `
     <div class="dice-roll">
       <div class="dice-result">
         <div class="dice-formula">${formula}</div>  
         ${tooltip}  
-        <h4 class="dice-total">${getTotal()}</h4>
       </div>
     </div>
   `;
-
-  //create the chat message
-  let messagedata = {
-      user: sender,
-      content: content,
-      flavor: flavortxt,
-      sound: CONFIG.sounds.dice
-  }
-  ChatMessage.create(messagedata);
 }
 
 const showDialog = async () => {
@@ -441,14 +507,14 @@ const showUnsetDialog = async() => {
         unset: {
           label: "Erase It",
           callback: async() => {
-            //unset my libwrapper
+            //turn target off
             resolve(eraseExistingTarget());
           }
         },
         reset: {
           label: "Replace It",
           callback: async() => {
-            //unregister my libwrapper
+            //turn target off
             //call showDialog
             resolve(replaceExistingTarget());
           }
@@ -469,14 +535,14 @@ const showUnsetDialog = async() => {
 
 function eraseExistingTarget(){
   console.log('Fudge Player Rolls | Erasing fudge target');
-  libWrapper.unregister('fudge-player-rolls', 'ChatMessage.prototype._onCreate');
-  wrapperIsRegistered = false;
+  target = 'off';
+  console.log(`target = ${target}`);
 }
 
 function replaceExistingTarget(){
   console.log('Fudge Player Rolls | Replacing fudge target');
-  libWrapper.unregister('fudge-player-rolls', 'ChatMessage.prototype._onCreate');
-  wrapperIsRegistered = false;
+  target = 'off';
+  console.log(`target = ${target}`);
   showDialog();
 }
 
@@ -491,11 +557,14 @@ Hooks.on("getSceneControlButtons", (controls) => {
     title: "Fudge Player Roll",
     icon: "fas fa-poop",
     onClick: () => {
-        if (wrapperIsRegistered){
+        if (target != 'off'){
+          //if a target is already set
           showUnsetDialog();
         }else {
+          //if a target isn't already set
           showDialog();
-          wrapperIsRegistered = true;
+          target = 1;
+          console.log(`target = ${target}`);
         }
     },
     button: true
