@@ -504,11 +504,11 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt, document) => {
       } else if (foundAtwenty === true){
         htmlResult = `<h4 class="dice-total critical" style="color:green">${getTotal()}</h4>`;
       } else{
-        htmlResult = `<h4 class="dice-total">${getTotal()}</h4>`;
+        htmlResult = `<h4 class="dice-total style="color:#191813">${getTotal()}</h4>`;
       }
     }
   else{
-      htmlResult = `<h4 class="dice-total">${getTotal()}</h4>`;
+      htmlResult = `<h4 class="dice-total style="color:#191813"">${getTotal()}</h4>`;
     }
   tooltip += htmlResult;
 
