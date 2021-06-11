@@ -1,13 +1,40 @@
+//define variables
+let sender, theRoll, flavortxt, content, formula, total, fakeRoll, target;
+
+//register settings
+Hooks.on('ready', async() => {
+  game.settings.register("fudge-player-rolls", "target-is-set", {
+    name: "Is the fudge target set?",
+    scope: "world",
+    config: false,
+    default: false,
+    type: Boolean,
+    onChange: () => console.log('Fudge Player Rolls | setting "target-is-set" was changed')
+  });
+
+  game.settings.register("fudge-player-rolls", "target", {
+    name: "What is the fudge total?",
+    scope: "world",
+    config: false,
+    default: 0,
+    type: Number,
+    onChange: () => console.log('Fudge Player Rolls | setting "target" was changed')
+  });
+});
+
+//set the target-is-set and total settings to false and 0
 Hooks.on('ready', () => {
-  CONFIG.debug.hooks = true;
-})
+  //CONFIG.debug.hooks = true;
+  game.settings.set("fudge-player-rolls", "target-is-set", false);
+  game.settings.set("fudge-player-rolls", "target", 0);
+});
 
 const whisperError = (error) => {
-  console.error(`Fudge Player Rolls | ${error}`);
+  console.warn(`Fudge Player Rolls (whisperError) | ${error}`);
   ChatMessage.create({
-    user: game.user._id,
-    whisper: [game.user._id],
-    flavor: "Fudge Player Rolls",
+    user: game.user.id,
+    whisper: [game.user.id],
+    flavor: `Fudge Player Rolls`,
     content: `<div>Error: ${error}</div>`
   });
 };
@@ -24,6 +51,7 @@ const parseTarget = (target) => {
 const parseDialogDoc = (doc) => {
   try {
     const target = parseTarget(doc.find("input[name=target]")[0].value);
+    console.log('Fudge Player Rolls (parseDialogDoc) | target is ', target);
     return target;
   } catch (e) {
     console.error(e);
@@ -31,43 +59,64 @@ const parseDialogDoc = (doc) => {
   }
 }
 
-//define variables
-let sender, theRoll, flavortxt, content, formula, total, fakeRoll;
-let target = 'off';
-
 const onSubmit = async (doc) => {
   target = parseDialogDoc(doc);
-  if (!target) {
-    target = 'off';
+  if (isNaN(target)) {
+    game.settings.set('fudge-player-rolls', 'target-is-set', false);
     return whisperError("Invalid Target Format");
   }
-  console.log(`Fudge Player Rolls | target is ${target}`);
+  //save the target to the server
+  game.settings.set("fudge-player-rolls", "target", target);
+
+  console.log(`Fudge Player Rolls (onSubmit) | target is ${target}`);
+
+  //set the fudge target state to true
+  game.settings.set('fudge-player-rolls', 'target-is-set', true);
 };
 
-Hooks.on('preCreateChatMessage',(document, createData, options, userId) => {
+Hooks.on('preCreateChatMessage',(document) => {
   sender = document.data.speaker;
+  target = game.settings.get("fudge-player-rolls", "target"); //get the target from the server
+  console.log('Fudge Player Rolls (preCreateChatMessage) | target = ', target);
+  console.log('Fudge Player Rolls (preCreateChatMessage) | message is a roll = ', document.isRoll);
+  console.log('Fudge Player Rolls (preCreateChatMessage) | target (settings) = ', game.settings.get('fudge-player-rolls', 'target-is-set'));
 
-  if (document.user.isGM) return;
+  if (document.user.isGM) {
+    console.log('Fudge Player Rolls | user is GM. Roll not fudged.');
+    return;
+  }
 
-  if (target != 'off' && document.isRoll){ 
+  if (game.settings.get('fudge-player-rolls', 'target-is-set') && document.isRoll){
+    console.log('Fudge Player Rolls | message is a roll and a target is set');
     //if the message is a roll sent by a player and a target is set
     // - call fudgeRoll
-    // - since this is the next player roll, turn off target
+    // - since this is the next player roll, change target-is-set to false
     theRoll = JSON.parse(document.data.roll);
     flavortxt = document.data.flavor;
     fudgeRoll(target, theRoll, sender, flavortxt, document);
     //update the chat data
     document.data.update({
       speaker: sender,
-      content: content, //***this will = the total
-      flavor: flavortxt,
-      sound: 'sounds/dice.wav' //*** shouldn't need this at all, as it doesn't need changing
-      //, roll: fakeRoll      ***this will be a stringified object in the correct format
+      content: content, 
+      flavor: flavortxt
     });
 
-    target = 'off';   
-    console.log(`Fudge Player Rolls | Roll was fudged.`);   
+    console.log(`Fudge Player Rolls | Roll was fudged.`); 
+    
     return;
+  }
+});
+
+Hooks.on('createChatMessage', (doc) => {
+  //set fudge target state to false
+  //the players don't have permission to update the setting, so we need to do it on the GM's client.
+  //the createChatMessage hook is called on the GM's client even when a player rolls so we just need to check if the chat message is a fudged roll.
+  if (game.user.isGM){
+    let message = doc.data.content;
+    if (message.includes( '<div class="dice-tooltip fudged-roll">' )){
+      //if it's a fudged roll, 
+      game.settings.set('fudge-player-rolls', 'target-is-set', false);
+    }
   }
 });
 
@@ -75,7 +124,7 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt, document) => {
   formula = theRoll.formula;
 
   /**
-   * Get the Total and minimum possible and maximum possible rolls by looping through theRoll.terms
+   * Get the Total, minimum possible and maximum possible rolls by looping through theRoll.terms
    *  - create modterms array that will become the total of the modifiers
    *  - create diceterms array that stores only the die expression objects, without the modifiers
    *  - -- define the 'minus' property of the diceterm object, which will tell us later whether we should subtract or add that term
@@ -127,12 +176,11 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt, document) => {
   total = target;
   if (total < minroll){ 
     total = minroll;
-    whisperError(`Total was less than min possible roll. Total changed to ${minroll}`);
   }
   if (total > maxroll){ 
     total = maxroll;
-    whisperError(`Total was greater than max possible roll. Total changed to ${maxroll}`);
   }
+  console.log('Fudge Player Rolls | total = ', total);
 
   //loop through all dice terms. If any have adv/dis and its num is 1, change the num to 2.
   for (let i=0; i<diceterms.length; i++){
@@ -261,7 +309,6 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt, document) => {
     if (getTotal() != total){
       toDistribute = getTotal() - total;
       if (toDistribute <= 0){
-        whisperError(`Something went wrong.`);
         return;
       }
       while(toDistribute > 0){
@@ -304,7 +351,7 @@ const fudgeRoll = async (target, theRoll, sender, flavortxt, document) => {
   }
 
 
-  let tooltip = `<div class="dice-tooltip">`;
+  let tooltip = `<div class="dice-tooltip fudged-roll">`;
   for (let i=0; i<diceterms.length; i++){
     let diceterm = diceterms[i];
     let sides = diceterm.faces;
@@ -499,7 +546,7 @@ const showDialog = async () => {
   });
 }
 
-const showUnsetDialog = async() => {
+const showUnsetDialog = async () => {
   const html = `<p>You have already set a target. What do you want to do?</p>`;
   return new Promise((resolve) => {
     new Dialog({
@@ -516,8 +563,7 @@ const showUnsetDialog = async() => {
         reset: {
           label: "Replace It",
           callback: async() => {
-            //turn target off
-            //call showDialog
+            //turn target off and call showDialog
             resolve(replaceExistingTarget());
           }
         },
@@ -536,15 +582,15 @@ const showUnsetDialog = async() => {
 }
 
 function eraseExistingTarget(){
-  console.log('Fudge Player Rolls | Erasing fudge target');
-  target = 'off';
-  console.log(`target = ${target}`);
+  game.settings.set('fudge-player-rolls', 'target-is-set', false);
+  console.log('Fudge Player Rolls | Fudge target erased.');
+  console.log('Fudge Player Rolls (eraseExistingTarget) | target is ', target);
 }
 
 function replaceExistingTarget(){
   console.log('Fudge Player Rolls | Replacing fudge target');
-  target = 'off';
-  console.log(`target = ${target}`);
+  game.settings.set('fudge-player-rolls', 'target-is-set', false);
+  console.log('Fudge Player Rolls (replaceExistingTarget) | target is ', game.settings.get('fudge-player-rolls', 'target-is-set'));
   showDialog();
 }
 
@@ -559,14 +605,13 @@ Hooks.on("getSceneControlButtons", (controls) => {
     title: "Fudge Player Roll",
     icon: "fas fa-poop",
     onClick: () => {
-        if (target != 'off'){
+        if (game.settings.get('fudge-player-rolls', 'target-is-set')){
           //if a target is already set
           showUnsetDialog();
         }else {
-          //if a target isn't already set
+          //target is off (a target isn't set)
           showDialog();
-          target = 1;
-          console.log(`target = ${target}`);
+          console.log(`Fudge Player Rolls (after showDialog) | target is ${game.settings.get('fudge-player-rolls', 'target')}`);
         }
     },
     button: true
